@@ -103,6 +103,134 @@ describe Api::WebHooks::HostedBitBucketController do
         expect(response.status).to eq(202)
       end
 
+      it 'should call the material update service upon receiving a good PR request and respond with 202 [accepted]' do
+        expect(@server_config_service).to receive(:getWebhookSecret).and_return('secret')
+
+        params = {
+          	eventKey: "pr:opened",
+          	date: "2019-07-19T13:35:24+0200",
+          	pullRequest: {
+          		id: 3,
+          		version: 0,
+          		title: "Test2",
+          		description: "* pr test\r\n* pr test",
+          		state: "OPEN",
+          		open: true,
+          		closed: false,
+          		createdDate: 1563536124522,
+          		updatedDate: 1563536124522,
+          		fromRef: {
+          			id: "refs/heads/test2",
+          			displayId: "test2",
+          			latestCommit: "74e0c19f4d9ec45f2ac050266d1116bd076efc83",
+          			repository: {
+          				slug: "my-repo",
+          				id: 1968,
+          				name: "my-repo",
+          				scmId: "git",
+          				state: "AVAILABLE",
+          				statusMessage: "Available",
+          				forkable: true,
+          				project: {
+          					key: "my-proj",
+          					id: 247
+          				},
+          				public: false,
+          				links: {
+          					clone: [
+          						{
+          							href: "ssh://git.my-company.com:7999/my-proj/my-repo.git",
+          							name: "ssh"
+          						},
+          						{
+          							href: "https://subdomain.my-company.com/bitbucket/scm/my-proj/my-repo.git",
+          							name: "http"
+          						}
+          					],
+          					self: [
+          						{
+          							href: "https://sso.my-company.com/bitbucket/projects/my-proj/my-repo/browse"
+          						}
+          					]
+          				}
+          			}
+          		},
+          		toRef: {
+          			id: "refs/heads/master",
+          			displayId: "master",
+          			latestCommit: "c01ebc327bc243a7cfb825d7fe14cca887c5ab19",
+          			repository: {
+          				slug: "my-repo",
+          				id: 1968,
+          				name: "my-repo",
+          				scmId: "git",
+          				state: "AVAILABLE",
+          				statusMessage: "Available",
+          				forkable: true,
+          				project: {
+          					key: "my-proj",
+          					id: 247
+          				},
+          				public: false,
+          				links: {
+          					clone: [
+          						{
+          							href: "ssh://git.my-company.com:7999/my-proj/my-repo.git",
+          							name: "ssh"
+          						},
+          						{
+          							href: "https://subdomain.my-company.com/bitbucket/scm/my-proj/my-repo.git",
+          							name: "http"
+          						}
+          					],
+          					self: [
+          						{
+          							href: "https://sso.my-company.com/bitbucket/projects/my-proj/my-repo/browse"
+          						}
+          					]
+          				}
+          			}
+          		},
+          		locked: false,
+          		links: {
+          			self: [
+          				{
+          					href: "https://sso.my-company.com/bitbucket/projects/my-proj/my-repo/pull-requests/3"
+          				}
+          			]
+          		}
+          	}
+        }
+
+        params_string = params.to_json
+
+        allow(request).to receive(:body) do
+          StringIO.new(params_string)
+        end
+
+        signature = 'sha256=' + OpenSSL::HMAC.hexdigest(OpenSSL::Digest.new('sha256'), 'secret', request.body.read)
+
+        request.headers.merge!({
+                                 'X-Event-Key' => 'pr:opened',
+                                 'X-Hub-Signature' => signature,
+                                 'Content-Type' => 'application/json'
+                               })
+
+        all_matching_repos = %w(
+                            ssh://git.my-company.com:7999/my-proj/my-repo.git
+                            https://subdomain.my-company.com/bitbucket/scm/my-proj/my-repo.git
+                            )
+
+        expect(@material_update_service)
+          .to receive(:updatePrMaterial)
+          .with(all_matching_repos)
+          .and_return(true)
+
+        post :notify, params: params
+        expect(response.body).to eq('OK!')
+        expect(response.status).to eq(202)
+      end
+
       it 'should return 400 [bad request] if the signature does not match our signed payload' do
         expect(@server_config_service).to receive(:getWebhookSecret).and_return('secret')
         params = {}

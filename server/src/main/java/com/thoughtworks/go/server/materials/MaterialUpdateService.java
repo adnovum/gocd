@@ -16,12 +16,32 @@
 
 package com.thoughtworks.go.server.materials;
 
-import com.thoughtworks.go.config.*;
+import static com.thoughtworks.go.serverhealth.HealthStateType.general;
+import static com.thoughtworks.go.serverhealth.ServerHealthState.warning;
+
+import java.util.Collection;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+
+import com.thoughtworks.go.config.CruiseConfig;
+import com.thoughtworks.go.config.GoConfigWatchList;
+import com.thoughtworks.go.config.PipelineConfig;
+import com.thoughtworks.go.config.SecretParamAware;
+import com.thoughtworks.go.config.SecretParams;
+import com.thoughtworks.go.config.materials.PluggableSCMMaterial;
 import com.thoughtworks.go.config.materials.dependency.DependencyMaterial;
 import com.thoughtworks.go.config.materials.git.GitMaterial;
 import com.thoughtworks.go.config.materials.svn.SvnMaterial;
 import com.thoughtworks.go.domain.materials.Material;
 import com.thoughtworks.go.domain.materials.MaterialConfig;
+import com.thoughtworks.go.domain.scm.SCM;
 import com.thoughtworks.go.listener.ConfigChangedListener;
 import com.thoughtworks.go.listener.EntityConfigChangedListener;
 import com.thoughtworks.go.server.domain.Username;
@@ -43,19 +63,11 @@ import com.thoughtworks.go.serverhealth.ServerHealthState;
 import com.thoughtworks.go.util.MaterialFingerprintTag;
 import com.thoughtworks.go.util.ProcessManager;
 import com.thoughtworks.go.util.SystemEnvironment;
+import com.thoughtworks.go.util.command.UrlArgument;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.function.Predicate;
-import java.util.stream.Collectors;
-
-import static com.thoughtworks.go.serverhealth.HealthStateType.general;
-import static com.thoughtworks.go.serverhealth.ServerHealthState.warning;
 
 /**
  * @understands when to send requests to update a material on the database
@@ -161,6 +173,7 @@ public class MaterialUpdateService implements GoMessageListener<MaterialUpdateCo
     }
 
     public boolean updateGitMaterial(String branchName, Collection<String> possibleUrls) {
+        LOGGER.info("updating git materials with possible urls " + possibleUrls);
         final CruiseConfig cruiseConfig = goConfigService.currentCruiseConfig();
         Set<Material> allUniquePostCommitSchedulableMaterials = materialConfigConverter.toMaterials(cruiseConfig.getAllUniquePostCommitSchedulableMaterials());
 
@@ -170,6 +183,20 @@ public class MaterialUpdateService implements GoMessageListener<MaterialUpdateCo
         allGitMaterials.forEach(MaterialUpdateService.this::updateMaterial);
 
         return !allGitMaterials.isEmpty();
+    }
+
+    public boolean updatePrMaterial(Collection<String> possibleUrls) {
+    	LOGGER.info("updating pr materials with possible urls " + possibleUrls);
+        final CruiseConfig cruiseConfig = goConfigService.currentCruiseConfig();
+        Set<Material> allUniquePostCommitSchedulableMaterials = materialConfigConverter.toMaterials(cruiseConfig.getAllUniquePostCommitSchedulableMaterials());
+
+        Predicate<Material> predicate = new PluggableScmMaterialPredicate(possibleUrls);
+        Set<Material> allPrMaterials =
+                allUniquePostCommitSchedulableMaterials.stream().filter(predicate).collect(Collectors.toSet());
+
+        allPrMaterials.forEach(MaterialUpdateService.this::updateMaterial);
+
+        return !allPrMaterials.isEmpty();
     }
 
     public boolean updateMaterial(Material material) {
@@ -308,6 +335,32 @@ public class MaterialUpdateService implements GoMessageListener<MaterialUpdateCo
             return material instanceof GitMaterial &&
                     ((GitMaterial) material).getBranch().equals(branchName) &&
                     possibleUrls.contains(((GitMaterial) material).getUrlArgument().withoutCredentials());
+        }
+    }
+
+    private static class PluggableScmMaterialPredicate implements Predicate<Material> {
+        private final Set<String> possibleUrls;
+
+        public PluggableScmMaterialPredicate(Collection<String> possibleUrls) {
+            this.possibleUrls = new HashSet<>(possibleUrls);
+        }
+
+        @Override
+        public boolean test(Material material) {
+            LOGGER.info("Testing " + material.getClass());
+            return material instanceof PluggableSCMMaterial &&
+                    testUrl((PluggableSCMMaterial) material);
+        }
+
+        private boolean testUrl(PluggableSCMMaterial material) {
+            LOGGER.info("Pluggable scm config map: " + material.getScmConfig().getConfigAsMap());
+            Optional<Map<String, String>> urlCfg = Optional.ofNullable(material.getScmConfig().getConfigAsMap().get("url"));
+            LOGGER.info("url config: " + urlCfg.orElse(null));
+            return urlCfg.map(c -> c.get(SCM.VALUE_KEY))
+                    .map(UrlArgument::new)
+                    .map(UrlArgument::withoutCredentials)
+                    .map(possibleUrls::contains)
+                    .orElse(false);
         }
     }
 }

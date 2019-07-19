@@ -18,9 +18,17 @@ module Api
   module WebHooks
     class WebHookController < ::Api::ApiController
       def notify
-        Rails.logger.info("[WebHook] Noticed a git push to #{repo_log_name} on branch #{repo_branch}")
+        update_match = false
 
-        if material_update_service.updateGitMaterial(repo_branch, possible_urls)
+        if is_pr_event
+          Rails.logger.info("[WebHook] Noticed a pull request push to #{repo_log_name}")
+          update_match = material_update_service.updatePrMaterial(possible_urls)
+        else
+          Rails.logger.info("[WebHook] Noticed a git push to #{repo_log_name} on branch #{repo_branch}")
+          update_match = material_update_service.updateGitMaterial(repo_branch, possible_urls)
+        end
+
+        if update_match
           render plain: 'OK!', status: :accepted, layout: nil
         else
           render plain: 'No matching materials!', status: :accepted, layout: nil
@@ -39,6 +47,10 @@ module Api
 
       def repo_log_name
         raise 'Subclass responsibility!'
+      end
+
+      def is_pr_event
+        false
       end
 
       def webhook_secret
