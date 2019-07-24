@@ -177,12 +177,14 @@ public class MaterialUpdateService implements GoMessageListener<MaterialUpdateCo
         final CruiseConfig cruiseConfig = goConfigService.currentCruiseConfig();
         Set<Material> allUniquePostCommitSchedulableMaterials = materialConfigConverter.toMaterials(cruiseConfig.getAllUniquePostCommitSchedulableMaterials());
 
-        Predicate<Material> predicate = new MaterialPredicate(branchName, possibleUrls);
-        Set<Material> allGitMaterials = allUniquePostCommitSchedulableMaterials.stream().filter(predicate).collect(Collectors.toSet());
+        Predicate<Material> predicate = new MaterialPredicate(branchName, possibleUrls)
+                .or(new PluggableScmMaterialPredicate(possibleUrls));
+        Set<Material> allGitLikeMaterials =
+                allUniquePostCommitSchedulableMaterials.stream().filter(predicate).collect(Collectors.toSet());
 
-        allGitMaterials.forEach(MaterialUpdateService.this::updateMaterial);
+        allGitLikeMaterials.forEach(MaterialUpdateService.this::updateMaterial);
 
-        return !allGitMaterials.isEmpty();
+        return !allGitLikeMaterials.isEmpty();
     }
 
     public boolean updatePrMaterial(Collection<String> possibleUrls) {
@@ -194,7 +196,10 @@ public class MaterialUpdateService implements GoMessageListener<MaterialUpdateCo
         Set<Material> allPrMaterials =
                 allUniquePostCommitSchedulableMaterials.stream().filter(predicate).collect(Collectors.toSet());
 
-        allPrMaterials.forEach(MaterialUpdateService.this::updateMaterial);
+        allPrMaterials.forEach(m -> {
+            LOGGER.info("updating found pr material " + m.getId());
+            MaterialUpdateService.this.updateMaterial(m);
+        });
 
         return !allPrMaterials.isEmpty();
     }
@@ -202,7 +207,7 @@ public class MaterialUpdateService implements GoMessageListener<MaterialUpdateCo
     public boolean updateMaterial(Material material) {
         Date inProgressSince = inProgress.putIfAbsent(material, new Date());
         if (inProgressSince == null || !material.isAutoUpdate()) {
-            LOGGER.debug("[Material Update] Starting update of material {}", material);
+            LOGGER.info("[Material Update] Starting update of material {}", material);
             try {
                 long trackingId = mduPerformanceLogger.materialSentToUpdateQueue(material);
                 queueFor(material).post(new MaterialUpdateMessage(material, trackingId));

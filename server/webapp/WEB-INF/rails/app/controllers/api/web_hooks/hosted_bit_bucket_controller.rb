@@ -57,7 +57,6 @@ module Api
       end
 
       def allow_only_push_event
-        # FIXME: check if pr:modified is really right
         unless is_git_event or is_pr_event
           render plain: "Ignoring event of type `#{request.headers['X-Event-Key']}'", status: :bad_request, layout: nil
         end
@@ -68,7 +67,7 @@ module Api
       end
 
       def is_pr_event
-        ['pr:opened', 'pr:modified'].include?(request.headers['X-Event-Key'])
+      	request.headers['X-Event-Key'] == 'pr:opened'
       end
 
       def verify_payload
